@@ -21,8 +21,8 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{e762574c-9fbf-4f75-a79e-aee33106a184}</ProjectGuid>
-    <RootNamespace>winserialfsremulator</RootNamespace>
+    <ProjectGuid>{4b1ef0b9-0d48-4a43-a07b-c6b42ea4e8a8}</ProjectGuid>
+    <RootNamespace>winserialcsvwriter</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
