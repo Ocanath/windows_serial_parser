@@ -27,7 +27,7 @@
 #define CSVBUFFER_SIZE	1024
 
 
-#define MAX_RX_BUF_SIZE	128	//larger than actually used
+#define RX_BUF_SIZE	((NUM_32BIT_WORDS+1)*sizeof(u32_fmt_t)*2)	//make buffer size exactly twice our expected buffer
 
 typedef union u32_fmt_t
 {
@@ -71,7 +71,7 @@ uint32_t get_checksum32(uint32_t* arr, int size)
 
 
 static const int frame_size = sizeof(u32_fmt_t) * (NUM_32BIT_WORDS + 1);	//2 words payload, 1 word checksum
-uint8_t rx_buf[MAX_RX_BUF_SIZE];
+uint8_t rx_buf[RX_BUF_SIZE];
 u32_fmt_t* fmt_buf = (u32_fmt_t*)(&rx_buf);	//ensure MAX_RX_BUF_SIZE is a multiple of 4!
 
 int main()
@@ -111,6 +111,13 @@ int main()
 					{
 						memcpy(&csvbuffer[csvbuffer_idx], &(rx_buf[0]), sizeof(data32_t));
 						csvbuffer_idx++;
+
+						printf("0x");
+						for (int i = 0; i < num_words32 - 1; i++)
+						{
+							printf("%.2X", fmt_buf[i].u32);
+						}
+						printf("\r\n");
 					}
 					else
 					{
@@ -120,14 +127,14 @@ int main()
 			}
 			if (chkmatch == 0)
 			{
-				//printf("error code %d, received %lu bytes, match = %d, buf = 0x", error, num_bytes_read, chkmatch);
+				//printf("0x");
 				//for (int i = 0; i < num_bytes_read; i++)
 				//{
-				//	printf("%0.2X", rx_buf[i]);
+				//	printf("%.2X", rx_buf[i]);
 				//}
-				//printf("\r\n");
+
 				mismatch_count++;
-				printf("data mismatch %d\r\n", mismatch_count);
+				printf("mis %d, nb %d\r\n", mismatch_count, num_bytes_read);
 			}
 		}
 	}
