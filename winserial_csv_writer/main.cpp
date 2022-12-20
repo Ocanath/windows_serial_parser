@@ -86,7 +86,7 @@ int main()
 	int csvbuffer_idx = 0;
 
 	uint64_t start_tick_64 = GetTickCount64();
-
+	uint32_t mismatch_count = 0;
 	while (1)
 	{
 		//ReadFileEx(usb_serial_port, )	//note: this completes with a callback. TODO: use it instead of the blocking version!
@@ -107,22 +107,27 @@ int main()
 				if (chksm32 == fmt_buf[num_words32 - 1].u32)
 				{
 					chkmatch = 1;
-					memcpy(&csvbuffer[csvbuffer_idx].d[0].ui8[0], &(rx_buf[0]), sizeof(data32_t));
-					csvbuffer_idx++;
-					if (csvbuffer_idx > CSVBUFFER_SIZE)
+					if (csvbuffer_idx < CSVBUFFER_SIZE)
+					{
+						memcpy(&csvbuffer[csvbuffer_idx], &(rx_buf[0]), sizeof(data32_t));
+						csvbuffer_idx++;
+					}
+					else
 					{
 						break;
 					}
 				}
 			}
-			//else if (chkmatch == 0)
+			if (chkmatch == 0)
 			{
-				printf("error code %d, received %lu bytes, match = %d, buf = 0x", error, num_bytes_read, chkmatch);
-				for (int i = 0; i < num_bytes_read; i++)
-				{
-					printf("%0.2X", rx_buf[i]);
-				}
-				printf("\r\n");
+				//printf("error code %d, received %lu bytes, match = %d, buf = 0x", error, num_bytes_read, chkmatch);
+				//for (int i = 0; i < num_bytes_read; i++)
+				//{
+				//	printf("%0.2X", rx_buf[i]);
+				//}
+				//printf("\r\n");
+				mismatch_count++;
+				printf("data mismatch %d\r\n", mismatch_count);
 			}
 		}
 	}
