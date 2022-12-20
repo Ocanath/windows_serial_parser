@@ -25,6 +25,7 @@ int connect_to_usb_serial(HANDLE* serial_handle, const char* com_port_name, unsi
 	uint32_t tmo_ms = ((uint32_t)frame_dur_ms) + 1;	//ceil
 
 	COMMTIMEOUTS timeouts = { 0 };
+	timeouts.ReadIntervalTimeout = 1;
 	timeouts.ReadTotalTimeoutConstant = tmo_ms;
 	rc |= (SetCommTimeouts((*serial_handle), &timeouts)) << 1;
 	if (rc != 0)
