@@ -24,7 +24,7 @@
 
 
 #define NUM_32BIT_WORDS	3	//number of words per transmission, INCLUDING the checksum appended to the end of the message!
-#define CSVBUFFER_SIZE	10
+#define CSVBUFFER_SIZE	100
 
 typedef union u32_fmt_t
 {
@@ -69,6 +69,11 @@ uint32_t get_checksum32(uint32_t* arr, int size)
 
 uint8_t rx_buf[sizeof(data32_t)*2];	//double buffer
 
+//struct buffer_log
+//{
+//	uint8_t buf[sizeof(data32_t) * 2];
+//};
+
 int main()
 {
 	HANDLE usb_serial_port;
@@ -80,6 +85,7 @@ int main()
 	//create log and csvbuffer arrays
 	data32_t* csvbuffer = new data32_t[CSVBUFFER_SIZE];	//put this on the heap for speed
 	int* log = new int[CSVBUFFER_SIZE];
+//	struct buffer_log* buffer_log = new struct buffer_log[CSVBUFFER_SIZE];
 
 	//init event log and csvbuffer arrays
 	for (int i = 0; i < CSVBUFFER_SIZE; i++)
@@ -107,7 +113,7 @@ int main()
 		{
 			//scan array for a collection of bytes of expected size with matching checksum, and load that index into startidx
 			//todo: encapsulate this as a function and unit test if things aren't working
-			int startidx = 0;
+			int startidx = -1;
 			for (int s = 0; s < (num_bytes_read/2); s++)
 			{
 				uint32_t* arr32 = (uint32_t*)(&rx_buf[s]);
@@ -119,43 +125,47 @@ int main()
 					break;
 				}
 			}
-
-			//log the part of the buffer beggining at the located start index which has a matching checksum
-			if (csvbuffer_idx < CSVBUFFER_SIZE)
+		
+			//if you have found a fully formed packet in the soup of garbage you just read
+			if (startidx >= 0)
 			{
-				memcpy(&csvbuffer[csvbuffer_idx], &rx_buf[startidx], sizeof(data32_t));
-				log[csvbuffer_idx] = 1;
-				csvbuffer_idx++;
-			}
-
-			//if you have an alignment issue, attempt to resolve it by loading the remainder of the bytes not stored in the double buffer of the next part. we discard the first part always
-			if (startidx != 0)
-			{
-				int cpy_start = startidx + sizeof(data32_t);
-				uint8_t* arr8 = (uint8_t*)(&part);
-				for (int i = cpy_start; i < sizeof(rx_buf); i++)
-				{
-					arr8[i - cpy_start] = rx_buf[i];
-				}
-				int nbytes_to_read = startidx;
-				int rc = ReadFile(usb_serial_port, &(arr8[sizeof(rx_buf) - cpy_start]), nbytes_to_read, (LPDWORD)(&num_bytes_read), NULL);
-				
-				/*log the remaining part into the csvbuffer*/
+				//log the first legit data found, no matter what
 				if (csvbuffer_idx < CSVBUFFER_SIZE)
 				{
-					memcpy(&csvbuffer[csvbuffer_idx], &part, sizeof(data32_t));
-					log[csvbuffer_idx] = 3;
+					memcpy(&csvbuffer[csvbuffer_idx], &rx_buf[startidx], sizeof(data32_t));
+					log[csvbuffer_idx] = 1;
 					csvbuffer_idx++;
 				}
-			}
-			else	//log the second half of the buffer as well, if start idx is zero
-			{
-				if (csvbuffer_idx < CSVBUFFER_SIZE)
+
+				if (startidx != 0)	//if startidx is not at the beginning, try to realign things with another small read call
 				{
-					memcpy(&csvbuffer[csvbuffer_idx], &rx_buf[startidx+sizeof(data32_t)], sizeof(data32_t));
-					log[csvbuffer_idx] = 2;
-					csvbuffer_idx++;
+					int cpy_start = startidx + sizeof(data32_t);
+					uint8_t* arr8 = (uint8_t*)(&part);
+					for (int i = cpy_start; i < sizeof(rx_buf); i++)
+					{
+						arr8[i - cpy_start] = rx_buf[i];
+					}
+					int nbytes_to_read = startidx;
+					int rc = ReadFile(usb_serial_port, &(arr8[sizeof(rx_buf) - cpy_start]), nbytes_to_read, (LPDWORD)(&num_bytes_read), NULL);
+
+					/*log the remaining part into the csvbuffer*/
+					if (csvbuffer_idx < CSVBUFFER_SIZE)
+					{
+						memcpy(&csvbuffer[csvbuffer_idx], &part, sizeof(data32_t));
+						log[csvbuffer_idx] = 3;
+						csvbuffer_idx++;
+					}
 				}
+				else	//log the second half of the buffer as well, if start idx is zero
+				{
+					if (csvbuffer_idx < CSVBUFFER_SIZE)
+					{
+						memcpy(&csvbuffer[csvbuffer_idx], &rx_buf[startidx + sizeof(data32_t)], sizeof(data32_t));
+						log[csvbuffer_idx] = 2;
+						csvbuffer_idx++;
+					}
+				}
+
 			}
 
 		}
@@ -168,9 +178,8 @@ int main()
 		printf("0x");
 		for (int w = 0; w < NUM_32BIT_WORDS; w++)
 		{
-			printf("%0.2X", csvbuffer[i].d[w].u32);
+			printf("%0.8X", csvbuffer[i].d[w].u32);
 		}
-		printf("\r\n");
 		uint32_t chk = get_checksum32((uint32_t*)(&csvbuffer[i]), NUM_32BIT_WORDS - 1);
 		if (chk == csvbuffer[i].d[NUM_32BIT_WORDS - 1].u32)
 		{
