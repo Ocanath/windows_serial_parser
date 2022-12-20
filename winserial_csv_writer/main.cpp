@@ -23,11 +23,8 @@
 */
 
 
-#define NUM_32BIT_WORDS	2	//number of words per transmission, NOT INCLUDING the checksum appended to the end of the message!
-#define CSVBUFFER_SIZE	1024
-
-
-#define RX_BUF_SIZE	((NUM_32BIT_WORDS+1)*sizeof(u32_fmt_t)*2)	//make buffer size exactly twice our expected buffer
+#define NUM_32BIT_WORDS	3	//number of words per transmission, INCLUDING the checksum appended to the end of the message!
+#define CSVBUFFER_SIZE	10
 
 typedef union u32_fmt_t
 {
@@ -70,75 +67,124 @@ uint32_t get_checksum32(uint32_t* arr, int size)
 
 
 
-static const int frame_size = sizeof(u32_fmt_t) * (NUM_32BIT_WORDS + 1);	//2 words payload, 1 word checksum
-uint8_t rx_buf[RX_BUF_SIZE];
-u32_fmt_t* fmt_buf = (u32_fmt_t*)(&rx_buf);	//ensure MAX_RX_BUF_SIZE is a multiple of 4!
+uint8_t rx_buf[sizeof(data32_t)*2];	//double buffer
 
 int main()
 {
 	HANDLE usb_serial_port;
-	if (connect_to_usb_serial(&usb_serial_port, "\\\\.\\COM4", 921600, frame_size) != 0)
+	if (connect_to_usb_serial(&usb_serial_port, "\\\\.\\COM4", 921600) != 0)
 		printf("found com port success\r\n");
 	else
 		printf("failed to find com port\r\n");
 
+	//create log and csvbuffer arrays
 	data32_t* csvbuffer = new data32_t[CSVBUFFER_SIZE];	//put this on the heap for speed
+	int* log = new int[CSVBUFFER_SIZE];
+
+	//init event log and csvbuffer arrays
+	for (int i = 0; i < CSVBUFFER_SIZE; i++)
+	{
+		log[i] = 0;
+		for(int w = 0; w < NUM_32BIT_WORDS; w++)
+			csvbuffer[i].d[w].u32 = 0xDEADBEEF;
+	}
+
 	int csvbuffer_idx = 0;
 
 	uint64_t start_tick_64 = GetTickCount64();
 	uint32_t mismatch_count = 0;
+	data32_t part = { 0 };
 	while (1)
 	{
 		//ReadFileEx(usb_serial_port, )	//note: this completes with a callback. TODO: use it instead of the blocking version!
 		//requires some RTFD, however. gonna get the dumb method working first
 
-		uint32_t num_bytes_read=0;
+		uint32_t num_bytes_read = 0;
 		int rc = ReadFile(usb_serial_port, rx_buf, sizeof(rx_buf), (LPDWORD)(&num_bytes_read), NULL);
-
-		if(num_bytes_read > 0)	//rc always 0 here because we are intentionally forcing error state every single time! 1337 haxxor *dons sunglasses*
+		
+		//search the double buffer for a matching checksum
+		if(num_bytes_read == sizeof(rx_buf))
 		{
-			DWORD error = GetLastError();
-			uint8_t chkmatch = 0;
-			//if((num_bytes_read % sizeof(u32_fmt_t)) == 0)
-			if(num_bytes_read == (sizeof(data32_t)+sizeof(u32_fmt_t)) )	//check for specific size
+			//scan array for a collection of bytes of expected size with matching checksum, and load that index into startidx
+			//todo: encapsulate this as a function and unit test if things aren't working
+			int startidx = 0;
+			for (int s = 0; s < (num_bytes_read/2); s++)
 			{
-				int num_words32 = num_bytes_read / sizeof(u32_fmt_t);
-				uint32_t chksm32 = get_checksum32((uint32_t*)rx_buf, num_words32-1);
-				if (chksm32 == fmt_buf[num_words32 - 1].u32)
+				uint32_t* arr32 = (uint32_t*)(&rx_buf[s]);
+				uint32_t chk = get_checksum32(arr32, NUM_32BIT_WORDS - 1);
+				
+				if (chk == arr32[NUM_32BIT_WORDS - 1])
 				{
-					chkmatch = 1;
-					if (csvbuffer_idx < CSVBUFFER_SIZE)
-					{
-						memcpy(&csvbuffer[csvbuffer_idx], &(rx_buf[0]), sizeof(data32_t));
-						csvbuffer_idx++;
-
-						printf("0x");
-						for (int i = 0; i < num_words32 - 1; i++)
-						{
-							printf("%.2X", fmt_buf[i].u32);
-						}
-						printf("\r\n");
-					}
-					else
-					{
-						break;
-					}
+					startidx = s;					
+					break;
 				}
 			}
-			if (chkmatch == 0)
-			{
-				//printf("0x");
-				//for (int i = 0; i < num_bytes_read; i++)
-				//{
-				//	printf("%.2X", rx_buf[i]);
-				//}
 
-				mismatch_count++;
-				printf("mis %d, nb %d\r\n", mismatch_count, num_bytes_read);
+			//log the part of the buffer beggining at the located start index which has a matching checksum
+			if (csvbuffer_idx < CSVBUFFER_SIZE)
+			{
+				memcpy(&csvbuffer[csvbuffer_idx], &rx_buf[startidx], sizeof(data32_t));
+				log[csvbuffer_idx] = 1;
+				csvbuffer_idx++;
 			}
+
+			//if you have an alignment issue, attempt to resolve it by loading the remainder of the bytes not stored in the double buffer of the next part. we discard the first part always
+			if (startidx != 0)
+			{
+				int cpy_start = startidx + sizeof(data32_t);
+				uint8_t* arr8 = (uint8_t*)(&part);
+				for (int i = cpy_start; i < sizeof(rx_buf); i++)
+				{
+					arr8[i - cpy_start] = rx_buf[i];
+				}
+				int nbytes_to_read = startidx;
+				int rc = ReadFile(usb_serial_port, &(arr8[sizeof(rx_buf) - cpy_start]), nbytes_to_read, (LPDWORD)(&num_bytes_read), NULL);
+				
+				/*log the remaining part into the csvbuffer*/
+				if (csvbuffer_idx < CSVBUFFER_SIZE)
+				{
+					memcpy(&csvbuffer[csvbuffer_idx], &part, sizeof(data32_t));
+					log[csvbuffer_idx] = 3;
+					csvbuffer_idx++;
+				}
+			}
+			else	//log the second half of the buffer as well, if start idx is zero
+			{
+				if (csvbuffer_idx < CSVBUFFER_SIZE)
+				{
+					memcpy(&csvbuffer[csvbuffer_idx], &rx_buf[startidx+sizeof(data32_t)], sizeof(data32_t));
+					log[csvbuffer_idx] = 2;
+					csvbuffer_idx++;
+				}
+			}
+
 		}
+		if (csvbuffer_idx >= CSVBUFFER_SIZE)
+			break;
 	}
+	printf("scanning csv:\r\n");
+	for (int i = 0; i < CSVBUFFER_SIZE; i++)
+	{
+		printf("0x");
+		for (int w = 0; w < NUM_32BIT_WORDS; w++)
+		{
+			printf("%0.2X", csvbuffer[i].d[w].u32);
+		}
+		printf("\r\n");
+		uint32_t chk = get_checksum32((uint32_t*)(&csvbuffer[i]), NUM_32BIT_WORDS - 1);
+		if (chk == csvbuffer[i].d[NUM_32BIT_WORDS - 1].u32)
+		{
+			printf(", pass");
+		}
+		else
+		{
+			printf(", fail");
+		}
+		printf(", logevt %d\r\n", log[i]);
+	}
+
 	printf("writing csv...\r\n");
 
 	delete[] csvbuffer;
+	delete[] log;
 }
