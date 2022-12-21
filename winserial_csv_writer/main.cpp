@@ -98,10 +98,78 @@ int start_idx_of_checksum_packet(uint8_t* rx_buf, int buf_size, int num_words_pa
 }
 
 
+/*
+* Init to:
+* start_idx = 1
+* end_idx = 0
+* 
+*/
+typedef struct circ_buffer_t
+{
+	data32_t * buf;
+	int idx;
+	int size;
+	uint8_t full;
+};
+
+/*could generalize data32 to a void * and entry size, but imma keep it as is for now*/
+void add_circ_buffer_element(data32_t * new_entry, circ_buffer_t * cb)
+{
+	memcpy(&cb->buf[cb->idx], new_entry, sizeof(data32_t));
+	cb->idx = cb->idx + 1;
+	if (cb->idx >= cb->size)
+	{
+		cb->idx = 0;
+		cb->full = 1;
+	}
+}
+
+void offload_circ_buffer_to_csv(circ_buffer_t * cb)
+{
+	if (cb->full == 0)
+	{
+		for (int i = 0; i < cb->idx; i++)
+		{
+			if(i < cb->idx-1)
+				printf("%d, ", cb->buf[i].d[0].i32);
+			else
+				printf("%d", cb->buf[i].d[0].i32);
+		}
+	}
+	else
+	{
+		for (int i = 0; i < cb->size; i++)
+		{
+			int bidx = (i + cb->idx) % cb->size;
+			
+			if (i < cb->size - 1)
+				printf("%d, ", cb->buf[bidx].d[0].i32);
+			else
+				printf("%d", cb->buf[bidx].d[0].i32);
+		}
+	}
+}
+
 uint8_t rx_buf[sizeof(data32_t)*2];	//double buffer
 
 int main()
 {
+	circ_buffer_t cb;
+	cb.size = 5;
+	cb.idx = 0;
+	cb.full = 0;
+	cb.buf = new data32_t[cb.size];
+	data32_t dummy_entry;
+	for (int i = 1; i <= 10; i++)
+	{
+		dummy_entry.d[0].i32 = i;
+		add_circ_buffer_element(&dummy_entry, &cb);
+		offload_circ_buffer_to_csv(&cb);
+		printf("\r\n");
+	}
+	delete[] cb.buf;
+	while (1);
+
 	HANDLE usb_serial_port;
 	if (connect_to_usb_serial(&usb_serial_port, "\\\\.\\COM4", 921600) != 0)
 		printf("found com port success\r\n");
@@ -127,6 +195,9 @@ int main()
 	uint64_t start_tick_64 = GetTickCount64();
 	uint32_t mismatch_count = 0;
 	data32_t part = { 0 };
+	int csvbuf_start = CSVBUFFER_SIZE-1;
+	int csvbuf_end = 0;
+
 	while (1)
 	{
 		//ReadFileEx(usb_serial_port, )	//note: this completes with a callback. TODO: use it instead of the blocking version!
