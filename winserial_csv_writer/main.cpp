@@ -1,6 +1,9 @@
 #include<stdio.h>
 #include "winserial.h"
 #include <stdint.h>
+#include <fstream>
+#include <iostream>
+
 /*
 * A note on this application.
 * Windows supports a total frame timeout in ms
@@ -23,8 +26,8 @@
 */
 
 
-#define NUM_32BIT_WORDS	3	//number of words per transmission, INCLUDING the checksum appended to the end of the message!
-#define CSVBUFFER_SIZE	1024
+#define NUM_32BIT_WORDS	6	//number of words per transmission, INCLUDING the checksum appended to the end of the message!
+#define CSVBUFFER_SIZE	10240
 
 typedef union u32_fmt_t
 {
@@ -104,6 +107,8 @@ int main()
 		printf("found com port success\r\n");
 	else
 		printf("failed to find com port\r\n");
+
+	std::ofstream fs("log.csv");
 
 	//create log and csvbuffer arrays
 	data32_t* csvbuffer = new data32_t[CSVBUFFER_SIZE];	//put this on the heap for speed
@@ -195,27 +200,44 @@ int main()
 	}
 
 
-	printf("scanning csv:\r\n");
-	for (int i = 0; i < CSVBUFFER_SIZE; i++)
-	{
-		printf("0x");
-		for (int w = 0; w < NUM_32BIT_WORDS; w++)
-		{
-			printf("%0.8X", csvbuffer[i].d[w].u32);
-		}
-		uint32_t chk = get_checksum32((uint32_t*)(&csvbuffer[i]), NUM_32BIT_WORDS - 1);
-		if (chk == csvbuffer[i].d[NUM_32BIT_WORDS - 1].u32)
-		{
-			printf(", pass");
-		}
-		else
-		{
-			printf(", fail");
-		}
-		printf(", logevt %d\r\n", log[i]);
-	}
+	//printf("scanning csv:\r\n");
+	//for (int i = 0; i < CSVBUFFER_SIZE; i++)
+	//{
+	//	printf("0x");
+	//	for (int w = 0; w < NUM_32BIT_WORDS; w++)
+	//	{
+	//		printf("%0.8X", csvbuffer[i].d[w].u32);
+	//	}
+	//	uint32_t chk = get_checksum32((uint32_t*)(&csvbuffer[i]), NUM_32BIT_WORDS - 1);
+	//	if (chk == csvbuffer[i].d[NUM_32BIT_WORDS - 1].u32)
+	//	{
+	//		printf(", pass");
+	//	}
+	//	else
+	//	{
+	//		printf(", fail");
+	//	}
+	//	printf(", logevt %d\r\n", log[i]);
+	//}
 
 	printf("writing csv...\r\n");
+
+	for (int row = 0; row < NUM_32BIT_WORDS - 1; row++)
+	{
+		for (int col = 0; col < CSVBUFFER_SIZE; col++)
+		{
+			if (checksum_matches(&csvbuffer[row]))
+			{
+				fs << csvbuffer[col].d[row].i32;
+				if (col < (CSVBUFFER_SIZE - 1))
+				{
+					fs << ",";
+				}
+			}
+		}
+		fs << "\n";
+	}
+	fs.close();
 
 	delete[] csvbuffer;
 	delete[] log;
