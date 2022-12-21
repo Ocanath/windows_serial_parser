@@ -24,7 +24,7 @@
 
 
 #define NUM_32BIT_WORDS	3	//number of words per transmission, INCLUDING the checksum appended to the end of the message!
-#define CSVBUFFER_SIZE	100
+#define CSVBUFFER_SIZE	1024
 
 typedef union u32_fmt_t
 {
@@ -41,7 +41,6 @@ typedef struct data32_t
 {
 	u32_fmt_t d[NUM_32BIT_WORDS];
 }data32_t;
-
 
 uint8_t get_checksum(uint8_t* arr, int size)
 {
@@ -66,13 +65,37 @@ uint32_t get_checksum32(uint32_t* arr, int size)
 }
 
 
+/**/
+uint8_t checksum_matches(data32_t* pData)
+{
+	int num_words = sizeof(data32_t) / sizeof(u32_fmt_t);
+	uint32_t* p32 = (uint32_t*)pData;
+	if (p32[num_words - 1] == get_checksum32(p32, num_words - 1))
+		return 1;
+	else
+		return 0;
+}
+
+
+int start_idx_of_checksum_packet(uint8_t* rx_buf, int buf_size, int num_words_packet)
+{
+	int startidx = -1;
+	for (int s = 0; s < (buf_size / 2); s++)
+	{
+		uint32_t* arr32 = (uint32_t*)(&rx_buf[s]);
+		uint32_t chk = get_checksum32(arr32, num_words_packet - 1);
+
+		if (chk == arr32[num_words_packet - 1])
+		{
+			startidx = s;
+			return startidx;
+		}
+	}
+	return startidx;
+}
+
 
 uint8_t rx_buf[sizeof(data32_t)*2];	//double buffer
-
-//struct buffer_log
-//{
-//	uint8_t buf[sizeof(data32_t) * 2];
-//};
 
 int main()
 {
@@ -85,7 +108,6 @@ int main()
 	//create log and csvbuffer arrays
 	data32_t* csvbuffer = new data32_t[CSVBUFFER_SIZE];	//put this on the heap for speed
 	int* log = new int[CSVBUFFER_SIZE];
-//	struct buffer_log* buffer_log = new struct buffer_log[CSVBUFFER_SIZE];
 
 	//init event log and csvbuffer arrays
 	for (int i = 0; i < CSVBUFFER_SIZE; i++)
@@ -113,27 +135,19 @@ int main()
 		{
 			//scan array for a collection of bytes of expected size with matching checksum, and load that index into startidx
 			//todo: encapsulate this as a function and unit test if things aren't working
-			int startidx = -1;
-			for (int s = 0; s < (num_bytes_read/2); s++)
-			{
-				uint32_t* arr32 = (uint32_t*)(&rx_buf[s]);
-				uint32_t chk = get_checksum32(arr32, NUM_32BIT_WORDS - 1);
-				
-				if (chk == arr32[NUM_32BIT_WORDS - 1])
-				{
-					startidx = s;					
-					break;
-				}
-			}
-		
+			int startidx = start_idx_of_checksum_packet(rx_buf, num_bytes_read, NUM_32BIT_WORDS);
+
 			//if you have found a fully formed packet in the soup of garbage you just read
 			if (startidx >= 0)
 			{
-				//log the first legit data found, no matter what
+				//log the first legit data found, no matter what. non-negative startidx indicates this payload is valid, so we don't have to do additional checks
 				if (csvbuffer_idx < CSVBUFFER_SIZE)
 				{
 					memcpy(&csvbuffer[csvbuffer_idx], &rx_buf[startidx], sizeof(data32_t));
-					log[csvbuffer_idx] = 1;
+					if (startidx == 0)
+						log[csvbuffer_idx] = 1;
+					else
+						log[csvbuffer_idx] = 3;
 					csvbuffer_idx++;
 				}
 
@@ -151,18 +165,25 @@ int main()
 					/*log the remaining part into the csvbuffer*/
 					if (csvbuffer_idx < CSVBUFFER_SIZE)
 					{
-						memcpy(&csvbuffer[csvbuffer_idx], &part, sizeof(data32_t));
-						log[csvbuffer_idx] = 3;
-						csvbuffer_idx++;
+						if (checksum_matches(&part))	//must verify the match to log here. it's possible part contains a spurious byte!
+						{
+							memcpy(&csvbuffer[csvbuffer_idx], &part, sizeof(data32_t));
+							log[csvbuffer_idx] = 4;
+							csvbuffer_idx++;
+						}
 					}
 				}
-				else	//log the second half of the buffer as well, if start idx is zero
+				else	//if the second half of the buffer matches, log it also. so far ONLY part that has been checked is the FIRST HALF, so we gotta scan this half too and make sure it's valid
 				{
 					if (csvbuffer_idx < CSVBUFFER_SIZE)
 					{
-						memcpy(&csvbuffer[csvbuffer_idx], &rx_buf[startidx + sizeof(data32_t)], sizeof(data32_t));
-						log[csvbuffer_idx] = 2;
-						csvbuffer_idx++;
+						data32_t* pdata = (data32_t*)(&rx_buf[startidx + sizeof(data32_t)]);
+						if (checksum_matches(pdata))
+						{
+							memcpy(&csvbuffer[csvbuffer_idx], pdata, sizeof(data32_t));
+							log[csvbuffer_idx] = 2;
+							csvbuffer_idx++;
+						}
 					}
 				}
 
@@ -172,6 +193,8 @@ int main()
 		if (csvbuffer_idx >= CSVBUFFER_SIZE)
 			break;
 	}
+
+
 	printf("scanning csv:\r\n");
 	for (int i = 0; i < CSVBUFFER_SIZE; i++)
 	{
