@@ -96,6 +96,7 @@ int start_idx_of_checksum_packet(uint8_t* rx_buf, int buf_size, int num_words_pa
 
 
 uint8_t rx_buf[sizeof(data32_t)*2];	//double buffer
+uint8_t prev_buf[sizeof(data32_t) * 2];	//double buffer
 
 int main()
 {
@@ -122,6 +123,7 @@ int main()
 	uint64_t start_tick_64 = GetTickCount64();
 	uint32_t mismatch_count = 0;
 	data32_t part = { 0 };
+	int prev_start_idx = -1;
 	while (1)
 	{
 		//ReadFileEx(usb_serial_port, )	//note: this completes with a callback. TODO: use it instead of the blocking version!
@@ -144,51 +146,41 @@ int main()
 				if (csvbuffer_idx < CSVBUFFER_SIZE)
 				{
 					memcpy(&csvbuffer[csvbuffer_idx], &rx_buf[startidx], sizeof(data32_t));
-					if (startidx == 0)
-						log[csvbuffer_idx] = 1;
-					else
-						log[csvbuffer_idx] = 3;
+					log[csvbuffer_idx] = 1;
 					csvbuffer_idx++;
 				}
-
-				if (startidx != 0)	//if startidx is not at the beginning, try to realign things with another small read call
+			}
+			if (prev_start_idx >= 0)
+			{
+				data32_t part;
+				uint8_t* arr8 = (uint8_t*)(&part);
+				int cpy_start = (prev_start_idx + sizeof(data32_t));
+				for (int i = cpy_start; i < sizeof(prev_buf); i++)
 				{
-					int cpy_start = startidx + sizeof(data32_t);
-					uint8_t* arr8 = (uint8_t*)(&part);
-					for (int i = cpy_start; i < sizeof(rx_buf); i++)
-					{
-						arr8[i - cpy_start] = rx_buf[i];
-					}
-					int nbytes_to_read = startidx;
-					int rc = ReadFile(usb_serial_port, &(arr8[sizeof(rx_buf) - cpy_start]), nbytes_to_read, (LPDWORD)(&num_bytes_read), NULL);
-
-					/*log the remaining part into the csvbuffer*/
+					arr8[i - cpy_start] = prev_buf[i];
+				}
+				for (int i = 0; i < startidx; i++)
+				{
+					arr8[i] = rx_buf[i];
+				}
+				
+				if (checksum_matches(&part))
+				{
+					//log the first legit data found, no matter what. non-negative startidx indicates this payload is valid, so we don't have to do additional checks
 					if (csvbuffer_idx < CSVBUFFER_SIZE)
 					{
-						if (checksum_matches(&part))	//must verify the match to log here. it's possible part contains a spurious byte!
-						{
-							memcpy(&csvbuffer[csvbuffer_idx], &part, sizeof(data32_t));
-							log[csvbuffer_idx] = 4;
-							csvbuffer_idx++;
-						}
+						memcpy(&csvbuffer[csvbuffer_idx], &part, sizeof(data32_t));
+						log[csvbuffer_idx] = 2;
+						csvbuffer_idx++;
 					}
 				}
-				else	//if the second half of the buffer matches, log it also. so far ONLY part that has been checked is the FIRST HALF, so we gotta scan this half too and make sure it's valid
-				{
-					if (csvbuffer_idx < CSVBUFFER_SIZE)
-					{
-						data32_t* pdata = (data32_t*)(&rx_buf[startidx + sizeof(data32_t)]);
-						if (checksum_matches(pdata))
-						{
-							memcpy(&csvbuffer[csvbuffer_idx], pdata, sizeof(data32_t));
-							log[csvbuffer_idx] = 2;
-							csvbuffer_idx++;
-						}
-					}
-				}
-
 			}
 
+			prev_start_idx = startidx;
+			for (int i = 0; i < (int)num_bytes_read; i++)
+			{
+				prev_buf[i] = rx_buf[i];
+			}
 		}
 		if (csvbuffer_idx >= CSVBUFFER_SIZE)
 			break;
