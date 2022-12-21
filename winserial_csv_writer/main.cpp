@@ -27,7 +27,6 @@
 
 
 #define NUM_32BIT_WORDS	6	//number of words per transmission, INCLUDING the checksum appended to the end of the message!
-#define CSVBUFFER_SIZE	10
 
 typedef union u32_fmt_t
 {
@@ -170,21 +169,18 @@ int main()
 
 	std::ofstream fs("log.csv");
 
+	int buffer_size = 10;
+
+
+
 	//create log and csvbuffer arrays
 	circ_buffer_t cb;
-	cb.size = CSVBUFFER_SIZE;
+	cb.size = buffer_size;
 	cb.read_idx = 0;
 	cb.read_size = 0;
 	cb.write_idx = 0;
 	cb.full = 0;
 	cb.buf = new data32_t[cb.size];
-	int* log = new int[CSVBUFFER_SIZE];
-
-	//init event log
-	for (int i = 0; i < CSVBUFFER_SIZE; i++)
-	{
-		log[i] = 0;
-	}
 
 	uint64_t start_tick_64 = GetTickCount64();
 	uint32_t mismatch_count = 0;
@@ -284,5 +280,4 @@ int main()
 
 	fs.close();
 	delete[] cb.buf;
-	delete[] log;
 }
