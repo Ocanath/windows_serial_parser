@@ -53,17 +53,22 @@ uint8_t get_checksum(uint8_t* arr, int size)
 	return -checksum;
 }
 
-
 /*
 Generic hex checksum calculation.
 TODO: use this in the psyonic API
 */
-uint32_t get_checksum32(uint32_t* arr, int size)
+uint32_t get_fletchers_checksum32(uint32_t* arr, int size, uint32_t * chk1)
 {
 	int32_t checksum = 0;
+	int32_t fchk = 0;
 	for (int i = 0; i < size; i++)
+	{
 		checksum += (int32_t)arr[i];
-	return -checksum;
+		fchk += checksum;
+	}
+	if(chk1 != NULL)
+		*chk1 = (uint32_t)(-checksum);
+	return fchk;
 }
 
 
@@ -72,7 +77,7 @@ uint8_t checksum_matches(data32_t* pData)
 {
 	int num_words = sizeof(data32_t) / sizeof(u32_fmt_t);
 	uint32_t* p32 = (uint32_t*)pData;
-	if (p32[num_words - 1] == get_checksum32(p32, num_words - 1))
+	if (p32[num_words - 1] == get_fletchers_checksum32(p32, num_words - 1, NULL))
 		return 1;
 	else
 		return 0;
@@ -85,7 +90,7 @@ int start_idx_of_checksum_packet(uint8_t* rx_buf, int buf_size, int num_words_pa
 	for (int s = 0; s < (buf_size / 2); s++)
 	{
 		uint32_t* arr32 = (uint32_t*)(&rx_buf[s]);
-		uint32_t chk = get_checksum32(arr32, num_words_packet - 1);
+		uint32_t chk = get_fletchers_checksum32(arr32, num_words_packet - 1, NULL);
 
 		if (chk == arr32[num_words_packet - 1])
 		{
@@ -111,7 +116,7 @@ typedef struct circ_buffer_t
 	int read_size;
 	int size;
 	uint8_t full;
-};
+}circ_buffer_t;
 
 /*could generalize data32 to a void * and entry size, but imma keep it as is for now*/
 void add_circ_buffer_element(data32_t* new_entry, circ_buffer_t* cb)
@@ -199,6 +204,7 @@ int main()
 		{
 			//scan array for a collection of bytes of expected size with matching checksum, and load that index into startidx
 			//todo: encapsulate this as a function and unit test if things aren't working
+			//NOTE: this uses FLETCHERS checksum, which uses sum of the checksum updates to evaluate a lightweight, order-sensitive checksum
 			int startidx = start_idx_of_checksum_packet(rx_buf, num_bytes_read, NUM_32BIT_WORDS);
 
 			//if you have found a fully formed packet in the soup of garbage you just read
@@ -229,7 +235,6 @@ int main()
 					data32_t* pdata = (data32_t*)(&rx_buf[startidx + sizeof(data32_t)]);
 					if (checksum_matches(pdata))
 					{
-						//memcpy(&csvbuffer[csvbuffer_idx], pdata, sizeof(data32_t));
 						add_circ_buffer_element(pdata, &cb);
 					}
 				}
