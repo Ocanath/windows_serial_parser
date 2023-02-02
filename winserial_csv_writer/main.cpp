@@ -25,9 +25,6 @@
 * UPDATE: appears to only work if intervaltimeout is nonzero. hard set it to 1 and it should be ok
 */
 
-
-#define NUM_32BIT_WORDS	6	//number of words per transmission, INCLUDING the checksum appended to the end of the message!
-
 typedef union u32_fmt_t
 {
 	uint32_t u32;
@@ -41,7 +38,7 @@ typedef union u32_fmt_t
 
 typedef struct data32_t
 {
-	u32_fmt_t d[NUM_32BIT_WORDS];
+	u32_fmt_t * d;
 }data32_t;
 
 uint8_t get_checksum(uint8_t* arr, int size)
@@ -73,11 +70,9 @@ uint32_t get_fletchers_checksum32(uint32_t* arr, int size, uint32_t * chk1)
 
 
 /**/
-uint8_t checksum_matches(data32_t* pData)
+uint8_t checksum_matches(uint32_t * pData, int num_words)
 {
-	int num_words = sizeof(data32_t) / sizeof(u32_fmt_t);
-	uint32_t* p32 = (uint32_t*)pData;
-	if (p32[num_words - 1] == get_fletchers_checksum32(p32, num_words - 1, NULL))
+	if (pData[num_words - 1] == get_fletchers_checksum32(pData, num_words - 1, NULL))
 		return 1;
 	else
 		return 0;
@@ -119,9 +114,9 @@ typedef struct circ_buffer_t
 }circ_buffer_t;
 
 /*could generalize data32 to a void * and entry size, but imma keep it as is for now*/
-void add_circ_buffer_element(data32_t* new_entry, circ_buffer_t* cb)
+void add_circ_buffer_element(uint8_t * new_data, int data32_num_words, circ_buffer_t* cb)
 {
-	memcpy(&cb->buf[cb->write_idx], new_entry, sizeof(data32_t));
+	memcpy(&cb->buf[cb->write_idx].d[0], new_data, data32_num_words*sizeof(u32_fmt_t));
 	cb->write_idx = cb->write_idx + 1;
 
 	if (cb->full == 0)
@@ -141,9 +136,9 @@ void add_circ_buffer_element(data32_t* new_entry, circ_buffer_t* cb)
 	}
 }
 
-void offload_circ_buffer_to_csv(std::ofstream &fs, circ_buffer_t* cb)
+void offload_circ_buffer_to_csv(std::ofstream &fs, int num_words_per_entry, circ_buffer_t* cb)
 {
-	for (int w = 0; w < NUM_32BIT_WORDS; w++)
+	for (int w = 0; w < num_words_per_entry; w++)
 	{
 		for (int i = 0; i < cb->read_size; i++)
 		{
@@ -151,7 +146,6 @@ void offload_circ_buffer_to_csv(std::ofstream &fs, circ_buffer_t* cb)
 			if (i < (cb->read_size - 1))
 			{
 				fs << cb->buf[bidx].d[w].i32 << ',';
-
 			}
 			else
 			{
@@ -162,7 +156,7 @@ void offload_circ_buffer_to_csv(std::ofstream &fs, circ_buffer_t* cb)
 	}
 }
 
-uint8_t rx_buf[sizeof(data32_t)*2];	//double buffer
+uint8_t rx_buf[4096];	//oversize buffer for stack speed. divide this by 8 to find the max num words possible to transmit by the transmitter
 
 int main()
 {
@@ -174,22 +168,33 @@ int main()
 
 	std::ofstream fs("log.csv");
 
-	int buffer_size = 10;
+	int num_words_per_packet = 6;
 
-
-
+	int circular_buffer_size = 10;
 	//create log and csvbuffer arrays
 	circ_buffer_t cb;
-	cb.size = buffer_size;
+	cb.size = circular_buffer_size;
 	cb.read_idx = 0;
 	cb.read_size = 0;
 	cb.write_idx = 0;
 	cb.full = 0;
 	cb.buf = new data32_t[cb.size];
+	for (int i = 0; i < cb.size; i++)
+	{
+		cb.buf[i].d = new u32_fmt_t[num_words_per_packet];
+	}
 
 	uint64_t start_tick_64 = GetTickCount64();
 	uint32_t mismatch_count = 0;
-	data32_t part = { 0 };
+	data32_t part;
+	part.d = new u32_fmt_t[num_words_per_packet];
+
+	int read_size = (sizeof(u32_fmt_t) * num_words_per_packet) * 2;		//DOUBLE BUFFER!
+	if (read_size > sizeof(rx_buf))
+	{
+		printf("Error: requested size too large\r\n");
+		return -1;
+	}
 
 	while (1)
 	{
@@ -197,26 +202,26 @@ int main()
 		//requires some RTFD, however. gonna get the dumb method working first
 
 		uint32_t num_bytes_read = 0;
-		int rc = ReadFile(usb_serial_port, rx_buf, sizeof(rx_buf), (LPDWORD)(&num_bytes_read), NULL);
+		int rc = ReadFile(usb_serial_port, rx_buf, read_size, (LPDWORD)(&num_bytes_read), NULL);	//should be a DOUBLE BUFFER!
 		
 		//search the double buffer for a matching checksum
-		if(num_bytes_read == sizeof(rx_buf))
+		if(num_bytes_read == read_size)
 		{
 			//scan array for a collection of bytes of expected size with matching checksum, and load that index into startidx
 			//todo: encapsulate this as a function and unit test if things aren't working
 			//NOTE: this uses FLETCHERS checksum, which uses sum of the checksum updates to evaluate a lightweight, order-sensitive checksum
-			int startidx = start_idx_of_checksum_packet(rx_buf, num_bytes_read, NUM_32BIT_WORDS);
+			int startidx = start_idx_of_checksum_packet(rx_buf, num_bytes_read, num_words_per_packet);
 
 			//if you have found a fully formed packet in the soup of garbage you just read
 			if (startidx >= 0)
 			{
 				//log the first legit data found, no matter what. non-negative startidx indicates this payload is valid, so we don't have to do additional checks;
-				add_circ_buffer_element((data32_t*)(&rx_buf[startidx]), &cb);
+				add_circ_buffer_element((&rx_buf[startidx]), num_words_per_packet, &cb);
 
 				if (startidx != 0)	//if startidx is not at the beginning, try to realign things with another small read call
 				{
-					int cpy_start = startidx + sizeof(data32_t);
-					uint8_t* arr8 = (uint8_t*)(&part);
+					int cpy_start = startidx + num_words_per_packet*sizeof(u32_fmt_t);
+					uint8_t* arr8 = (uint8_t*)(&part.d[0]);
 					for (int i = cpy_start; i < sizeof(rx_buf); i++)
 					{
 						arr8[i - cpy_start] = rx_buf[i];
@@ -225,17 +230,17 @@ int main()
 					int rc = ReadFile(usb_serial_port, &(arr8[sizeof(rx_buf) - cpy_start]), nbytes_to_read, (LPDWORD)(&num_bytes_read), NULL);
 
 					/*log the remaining part into the csvbuffer*/
-					if (checksum_matches(&part))	//must verify the match to log here. it's possible part contains a spurious byte!
+					if (checksum_matches((uint32_t*)(&part.d), num_words_per_packet))	//must verify the match to log here. it's possible part contains a spurious byte!
 					{
-						add_circ_buffer_element(&part, &cb);
+						add_circ_buffer_element((uint8_t*)(&part.d[0]), num_words_per_packet, &cb);
 					}
 				}
 				else	//if the second half of the buffer matches, log it also. so far ONLY part that has been checked is the FIRST HALF, so we gotta scan this half too and make sure it's valid
 				{
-					data32_t* pdata = (data32_t*)(&rx_buf[startidx + sizeof(data32_t)]);
-					if (checksum_matches(pdata))
+					uint8_t * pdata = &rx_buf[startidx + num_words_per_packet*sizeof(u32_fmt_t)];
+					if (checksum_matches((uint32_t*)pdata, num_words_per_packet))
 					{
-						add_circ_buffer_element(pdata, &cb);
+						add_circ_buffer_element(pdata, num_words_per_packet, &cb);
 					}
 				}
 			}
@@ -244,45 +249,13 @@ int main()
 			break;
 	}
 
-	offload_circ_buffer_to_csv(fs, &cb);
-	//printf("scanning csv:\r\n");
-	//for (int i = 0; i < CSVBUFFER_SIZE; i++)
-	//{
-	//	printf("0x");
-	//	for (int w = 0; w < NUM_32BIT_WORDS; w++)
-	//	{
-	//		printf("%0.8X", csvbuffer[i].d[w].u32);
-	//	}
-	//	uint32_t chk = get_checksum32((uint32_t*)(&csvbuffer[i]), NUM_32BIT_WORDS - 1);
-	//	if (chk == csvbuffer[i].d[NUM_32BIT_WORDS - 1].u32)
-	//	{
-	//		printf(", pass");
-	//	}
-	//	else
-	//	{
-	//		printf(", fail");
-	//	}
-	//	printf(", logevt %d\r\n", log[i]);
-	//}
-
-	//printf("writing csv...\r\n");
-
-	//for (int row = 0; row < NUM_32BIT_WORDS - 1; row++)
-	//{
-	//	for (int col = 0; col < CSVBUFFER_SIZE; col++)
-	//	{
-	//		if (checksum_matches(&csvbuffer[row]))
-	//		{
-	//			fs << csvbuffer[col].d[row].i32;
-	//			if (col < (CSVBUFFER_SIZE - 1))
-	//			{
-	//				fs << ",";
-	//			}
-	//		}
-	//	}
-	//	fs << "\n";
-	//}
-
+	offload_circ_buffer_to_csv(fs, num_words_per_packet, &cb);
+	
 	fs.close();
+	for (int i = 0; i < cb.size; i++)
+	{
+		delete[] cb.buf[i].d;
+	}
 	delete[] cb.buf;
+	delete[] part.d;
 }
