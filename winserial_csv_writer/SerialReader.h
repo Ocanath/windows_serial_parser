@@ -54,9 +54,11 @@ public:
 	data32_t part;
 	HANDLE usb_serial_port;
 	int num_words_per_packet;
+	void (* new_pkt_callback)(uint8_t * data, int num_bytes);
 
 	SerialReader(int nwords_per_pkt, int circular_buffer_size)
 	{
+		new_pkt_callback = NULL;
 		num_words_per_packet = nwords_per_pkt;
 		cb.size = circular_buffer_size;
 		cb.read_idx = 0;
@@ -123,6 +125,10 @@ public:
 			{
 				//log the first legit data found, no matter what. non-negative startidx indicates this payload is valid, so we don't have to do additional checks;
 				add_circ_buffer_element((&rx_buf[startidx]), num_words_per_packet, &cb);
+				if (new_pkt_callback != NULL)
+				{
+					(*new_pkt_callback)(&rx_buf[startidx], num_words_per_packet * sizeof(u32_fmt_t));
+				}
 
 				if (startidx != 0)	//if startidx is not at the beginning, try to realign things with another small read call
 				{
@@ -139,6 +145,10 @@ public:
 					if (checksum_matches((uint32_t*)(&part.d), num_words_per_packet))	//must verify the match to log here. it's possible part contains a spurious byte!
 					{
 						add_circ_buffer_element((uint8_t*)(&part.d[0]), num_words_per_packet, &cb);
+						if (new_pkt_callback != NULL)
+						{
+							(*new_pkt_callback)((uint8_t*)(&part.d[0]), num_words_per_packet * sizeof(u32_fmt_t));
+						}
 					}
 				}
 				else	//if the second half of the buffer matches, log it also. so far ONLY part that has been checked is the FIRST HALF, so we gotta scan this half too and make sure it's valid
@@ -147,6 +157,10 @@ public:
 					if (checksum_matches((uint32_t*)pdata, num_words_per_packet))
 					{
 						add_circ_buffer_element(pdata, num_words_per_packet, &cb);
+						if (new_pkt_callback != NULL)
+						{
+							(*new_pkt_callback)(pdata, num_words_per_packet * sizeof(u32_fmt_t));
+						}
 					}
 				}
 			}
