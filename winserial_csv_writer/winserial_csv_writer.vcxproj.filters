@@ -21,9 +21,15 @@
     <ClCompile Include="winserial.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="SerialReader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="winserial.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SerialReader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
