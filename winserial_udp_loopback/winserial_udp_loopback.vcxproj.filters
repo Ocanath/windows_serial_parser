@@ -18,18 +18,21 @@
     <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="winserial.cpp">
+    <ClCompile Include="SerialReader.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="SerialReader.cpp">
+    <ClCompile Include="winserial.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="winserial.h">
+    <ClInclude Include="WinUdpClient.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="SerialReader.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="winserial.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
